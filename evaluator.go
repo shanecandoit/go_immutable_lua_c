@@ -1,6 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"time"
+)
 
 // ObjectType represents the type of an object
 type ObjectType string
@@ -13,6 +18,7 @@ const (
 	NIL_OBJ      ObjectType = "NIL"
 	ERROR_OBJ    ObjectType = "ERROR"
 	FUNCTION_OBJ ObjectType = "FUNCTION"
+	POINTER_OBJ  ObjectType = "POINTER"
 )
 
 // Object represents a value in the interpreter
@@ -66,6 +72,50 @@ type Error struct {
 
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
+
+// Pointer represents a SHA256-hashed pointer
+type Pointer struct {
+	Hash     string // SHA256 hash
+	TypeName string // Type (e.g., "int", "string")
+	Size     int64  // Size/count
+	Freed    bool   // Whether it's been freed
+	Metadata *PointerMetadata
+}
+
+func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
+func (p *Pointer) Inspect() string {
+	if p.Freed {
+		return fmt.Sprintf("sha256:%s (freed)", p.Hash[:16])
+	}
+	return fmt.Sprintf("sha256:%s", p.Hash[:16])
+}
+
+// PointerMetadata tracks allocation and access information
+type PointerMetadata struct {
+	AllocLine   int
+	AllocColumn int
+	AllocTime   time.Time
+	LastRead    *AccessInfo
+	LastWrite   *AccessInfo
+}
+
+// AccessInfo tracks when and where a pointer was accessed
+type AccessInfo struct {
+	Line   int
+	Column int
+	Time   time.Time
+}
+
+// MemoryTracker tracks all allocated pointers for free report
+type MemoryTracker struct {
+	allocations map[string]*Pointer
+}
+
+func NewMemoryTracker() *MemoryTracker {
+	return &MemoryTracker{
+		allocations: make(map[string]*Pointer),
+	}
+}
 
 // Variable represents a variable binding with mutability information
 type Variable struct {
@@ -134,13 +184,15 @@ func (e *Environment) GetAllVariables() map[string]*Variable {
 
 // Evaluator evaluates the AST
 type Evaluator struct {
-	env *Environment
+	env    *Environment
+	memory *MemoryTracker
 }
 
 // NewEvaluator creates a new evaluator
 func NewEvaluator() *Evaluator {
 	return &Evaluator{
-		env: NewEnvironment(),
+		env:    NewEnvironment(),
+		memory: NewMemoryTracker(),
 	}
 }
 
@@ -154,6 +206,8 @@ func (ev *Evaluator) Eval(node Node) Object {
 	// Statements
 	case *AssignmentStatement:
 		return ev.evalAssignmentStatement(node)
+	case *ExpressionStatement:
+		return ev.Eval(node.Expression)
 
 	// Expressions
 	case *IntegerLiteral:
@@ -445,9 +499,9 @@ func (ev *Evaluator) evalCallExpression(node *CallExpression) Object {
 	if ident, ok := function.(*Identifier); ok {
 		switch ident.Value {
 		case "make":
-			return &Error{Message: "make() not yet implemented - coming in next feature!"}
+			return ev.evalMakeFunction(node)
 		case "free":
-			return &Error{Message: "free() not yet implemented - coming in next feature!"}
+			return ev.evalFreeFunction(node)
 		case "print":
 			return ev.evalPrintFunction(node.Arguments)
 		default:
@@ -456,6 +510,104 @@ func (ev *Evaluator) evalCallExpression(node *CallExpression) Object {
 	}
 
 	return &Error{Message: "not a function"}
+}
+
+// evalMakeFunction evaluates the built-in make function
+// Syntax: make(type, size) returns a SHA256 pointer
+func (ev *Evaluator) evalMakeFunction(node *CallExpression) Object {
+	if len(node.Arguments) != 2 {
+		return &Error{Message: "make() requires 2 arguments: make(type, size)"}
+	}
+
+	// Get type name - don't evaluate it, just get the identifier
+	var typeName string
+	if ident, ok := node.Arguments[0].(*Identifier); ok {
+		typeName = ident.Value
+	} else {
+		return &Error{Message: "make() first argument must be a type name"}
+	}
+
+	// Get size
+	sizeObj := ev.Eval(node.Arguments[1])
+	if isError(sizeObj) {
+		return sizeObj
+	}
+
+	var size int64
+	if intObj, ok := sizeObj.(*Integer); ok {
+		size = intObj.Value
+	} else {
+		return &Error{Message: "make() second argument must be an integer"}
+	}
+
+	if size <= 0 {
+		return &Error{Message: "make() size must be positive"}
+	}
+
+	// Generate SHA256 hash from allocation info
+	hash := ev.generatePointerHash(typeName, size, node.Token.Line, node.Token.Column)
+
+	// Create pointer object
+	pointer := &Pointer{
+		Hash:     hash,
+		TypeName: typeName,
+		Size:     size,
+		Freed:    false,
+		Metadata: &PointerMetadata{
+			AllocLine:   node.Token.Line,
+			AllocColumn: node.Token.Column,
+			AllocTime:   time.Now(),
+		},
+	}
+
+	// Track allocation
+	ev.memory.allocations[hash] = pointer
+
+	return pointer
+}
+
+// evalFreeFunction evaluates the built-in free function
+// Syntax: free(pointer)
+func (ev *Evaluator) evalFreeFunction(node *CallExpression) Object {
+	if len(node.Arguments) != 1 {
+		return &Error{Message: "free() requires 1 argument: free(pointer)"}
+	}
+
+	// Evaluate the argument
+	arg := ev.Eval(node.Arguments[0])
+	if isError(arg) {
+		return arg
+	}
+
+	// Check if it's a pointer
+	pointer, ok := arg.(*Pointer)
+	if !ok {
+		return &Error{Message: fmt.Sprintf("free() requires a pointer, got %s", arg.Type())}
+	}
+
+	// Check if already freed
+	if pointer.Freed {
+		return &Error{Message: fmt.Sprintf("double free detected for pointer %s", pointer.Hash[:16])}
+	}
+
+	// Mark as freed in the memory tracker's allocation map
+	if trackedPtr, exists := ev.memory.allocations[pointer.Hash]; exists {
+		trackedPtr.Freed = true
+
+		// Update metadata
+		if trackedPtr.Metadata.LastWrite == nil {
+			trackedPtr.Metadata.LastWrite = &AccessInfo{
+				Line:   node.Token.Line,
+				Column: node.Token.Column,
+				Time:   time.Now(),
+			}
+		}
+	}
+
+	// Also mark the local pointer as freed
+	pointer.Freed = true
+
+	return &Nil{}
 }
 
 // evalPrintFunction evaluates the built-in print function
@@ -485,4 +637,70 @@ func isError(obj Object) bool {
 // GetEnvironment returns the current environment (for testing/reporting)
 func (ev *Evaluator) GetEnvironment() *Environment {
 	return ev.env
+}
+
+// GetMemoryTracker returns the memory tracker (for reporting)
+func (ev *Evaluator) GetMemoryTracker() *MemoryTracker {
+	return ev.memory
+}
+
+// generatePointerHash generates a SHA256 hash for a pointer allocation
+func (ev *Evaluator) generatePointerHash(typeName string, size int64, line, column int) string {
+	// Create a unique string from allocation details
+	data := fmt.Sprintf("%s:%d:%d:%d:%d", typeName, size, line, column, time.Now().UnixNano())
+
+	// Generate SHA256 hash
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
+}
+
+// GetFreeReport generates a memory leak report
+func (ev *Evaluator) GetFreeReport() string {
+	var report string
+	report += "=== Memory Free Report ===\n"
+
+	var leaked []*Pointer
+	totalAllocated := 0
+	totalFreed := 0
+
+	for _, ptr := range ev.memory.allocations {
+		totalAllocated++
+		if ptr.Freed {
+			totalFreed++
+		} else {
+			leaked = append(leaked, ptr)
+		}
+	}
+
+	report += fmt.Sprintf("Leaked Variables: %d\n\n", len(leaked))
+
+	for _, ptr := range leaked {
+		report += fmt.Sprintf("Type: *%s\n", ptr.TypeName)
+		report += fmt.Sprintf("  Pointer: sha256:%s\n", ptr.Hash)
+		report += fmt.Sprintf("  Allocated: line %d, column %d\n", ptr.Metadata.AllocLine, ptr.Metadata.AllocColumn)
+
+		if ptr.Metadata.LastWrite != nil {
+			report += fmt.Sprintf("  Last Write: line %d, column %d\n", ptr.Metadata.LastWrite.Line, ptr.Metadata.LastWrite.Column)
+		} else {
+			report += "  Last Write: never\n"
+		}
+
+		if ptr.Metadata.LastRead != nil {
+			report += fmt.Sprintf("  Last Read: line %d, column %d\n", ptr.Metadata.LastRead.Line, ptr.Metadata.LastRead.Column)
+		} else {
+			report += "  Last Read: never\n"
+		}
+
+		report += "  Status: NOT FREED\n\n"
+	}
+
+	report += fmt.Sprintf("Total Allocated: %d\n", totalAllocated)
+	report += fmt.Sprintf("Total Freed: %d\n", totalFreed)
+
+	if totalAllocated > 0 {
+		efficiency := float64(totalFreed) / float64(totalAllocated) * 100
+		report += fmt.Sprintf("Memory Efficiency: %.2f%%\n", efficiency)
+	}
+
+	return report
 }

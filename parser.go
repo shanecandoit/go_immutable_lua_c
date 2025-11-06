@@ -64,6 +64,21 @@ func (as *AssignmentStatement) String() string {
 	return out
 }
 
+// ExpressionStatement represents an expression used as a statement
+type ExpressionStatement struct {
+	Token      Token // The first token of the expression
+	Expression Expression
+}
+
+func (es *ExpressionStatement) statementNode()       {}
+func (es *ExpressionStatement) TokenLiteral() string { return es.Token.Literal }
+func (es *ExpressionStatement) String() string {
+	if es.Expression != nil {
+		return es.Expression.String()
+	}
+	return ""
+}
+
 // Identifier represents an identifier
 type Identifier struct {
 	Token Token  // The TOKEN_IDENT token
@@ -258,15 +273,26 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseAssignmentStatement(true)
 	case TOKEN_IDENT:
 		// Could be assignment or expression statement
-		// For now, we'll treat it as assignment if followed by =
 		if p.peekTokenIs(TOKEN_ASSIGN) {
 			return p.parseAssignmentStatement(false)
 		}
-		// Otherwise skip for now (expression statement)
-		return nil
+		// Parse as expression statement
+		return p.parseExpressionStatement()
 	default:
-		return nil
+		// Try to parse as expression statement
+		return p.parseExpressionStatement()
 	}
+}
+
+// parseExpressionStatement parses an expression statement
+func (p *Parser) parseExpressionStatement() *ExpressionStatement {
+	stmt := &ExpressionStatement{
+		Token: p.curToken,
+	}
+
+	stmt.Expression = p.parseExpression(LOWEST)
+
+	return stmt
 }
 
 // parseAssignmentStatement parses a variable assignment
