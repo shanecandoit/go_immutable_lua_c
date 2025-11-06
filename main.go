@@ -3,8 +3,7 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Println("Immutable Lua/C Interpreter")
-	fmt.Println("===========================")
+	fmt.Println("# Immutable Lua/C Interpreter")
 	fmt.Println()
 
 	// Example: Evaluate some code
@@ -22,15 +21,14 @@ func main() {
 	program := parser.ParseProgram()
 
 	if len(parser.Errors()) > 0 {
-		fmt.Println("Parser errors:")
+		fmt.Println("Parser errors:\n")
 		for _, err := range parser.Errors() {
-			fmt.Println("  ", err)
+			fmt.Println("- ", err)
 		}
 		return
 	}
 
 	fmt.Println("Evaluating code...")
-	fmt.Println()
 
 	evaluator := NewEvaluator()
 	result := evaluator.Eval(program)
@@ -41,10 +39,10 @@ func main() {
 		return
 	}
 
-	fmt.Println("✓ Execution successful!")
+	fmt.Println("Execution successful!")
 	fmt.Println()
 	fmt.Println("Variables:")
-	fmt.Println("----------")
+	fmt.Println()
 
 	vars := evaluator.GetEnvironment().GetAllVariables()
 	for name, variable := range vars {
@@ -52,7 +50,7 @@ func main() {
 		if variable.Mutable {
 			mutStr = "mutable"
 		}
-		fmt.Printf("  %s = %s (%s)\n", name, variable.Value.Inspect(), mutStr)
+		fmt.Printf("-  %s = %s (%s)\n", name, variable.Value.Inspect(), mutStr)
 	}
 
 	fmt.Println()

@@ -428,3 +428,139 @@ func testIdentifier(t *testing.T, exp Expression, value string) bool {
 
 	return true
 }
+
+func TestParseIfStatement(t *testing.T) {
+	input := `if x > 5 then y = 10 end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*IfStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *IfStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if stmt.Condition == nil {
+		t.Fatal("stmt.Condition is nil")
+	}
+
+	if stmt.Consequence == nil {
+		t.Fatal("stmt.Consequence is nil")
+	}
+
+	if len(stmt.Consequence.Statements) != 1 {
+		t.Errorf("consequence is not 1 statement. got=%d",
+			len(stmt.Consequence.Statements))
+	}
+
+	if stmt.Alternative != nil {
+		t.Errorf("stmt.Alternative was not nil. got=%+v", stmt.Alternative)
+	}
+}
+
+func TestParseIfElseStatement(t *testing.T) {
+	input := `if x > 5 then y = 10 else y = 20 end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*IfStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *IfStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if stmt.Alternative == nil {
+		t.Fatal("stmt.Alternative is nil")
+	}
+
+	if len(stmt.Alternative.Statements) != 1 {
+		t.Errorf("alternative is not 1 statement. got=%d",
+			len(stmt.Alternative.Statements))
+	}
+}
+
+func TestParseIfElseifElseStatement(t *testing.T) {
+	input := `if x > 10 then y = 1 elseif x > 5 then y = 2 else y = 3 end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*IfStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *IfStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if len(stmt.Alternatives) != 1 {
+		t.Fatalf("stmt.Alternatives does not contain 1 elseif. got=%d",
+			len(stmt.Alternatives))
+	}
+
+	if stmt.Alternative == nil {
+		t.Fatal("stmt.Alternative is nil")
+	}
+}
+
+func TestParseIfExpression(t *testing.T) {
+	input := `result = if x > 5 then 1 else 2 end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*AssignmentStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *AssignmentStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if stmt.Value == nil {
+		t.Fatal("stmt.Value is nil")
+	}
+
+	ifExp, ok := stmt.Value.(*IfExpression)
+	if !ok {
+		t.Fatalf("stmt.Value is not *IfExpression. got=%T", stmt.Value)
+	}
+
+	if ifExp.Condition == nil {
+		t.Fatal("ifExp.Condition is nil")
+	}
+
+	if ifExp.Consequence == nil {
+		t.Fatal("ifExp.Consequence is nil")
+	}
+
+	if ifExp.Alternative == nil {
+		t.Fatal("ifExp.Alternative is nil")
+	}
+}

@@ -79,6 +79,85 @@ func (es *ExpressionStatement) String() string {
 	return ""
 }
 
+// IfExpression represents an if-then-else used as an expression
+type IfExpression struct {
+	Token        Token
+	Condition    Expression
+	Consequence  *BlockStatement
+	Alternatives []*ElseIfClause
+	Alternative  *BlockStatement
+}
+
+func (ie *IfExpression) expressionNode()      {}
+func (ie *IfExpression) TokenLiteral() string { return ie.Token.Literal }
+func (ie *IfExpression) String() string {
+	var out string
+	out += "if " + ie.Condition.String() + " then\n"
+	out += ie.Consequence.String()
+	for _, alt := range ie.Alternatives {
+		out += alt.String()
+	}
+	if ie.Alternative != nil {
+		out += "else\n" + ie.Alternative.String()
+	}
+	out += "end"
+	return out
+}
+
+// IfStatement represents an if-then-else statement
+// Lua syntax: if condition then ... elseif condition then ... else ... end
+type IfStatement struct {
+	Token        Token           // The 'if' token
+	Condition    Expression      // The condition expression
+	Consequence  *BlockStatement // The 'then' block
+	Alternatives []*ElseIfClause // Optional elseif clauses
+	Alternative  *BlockStatement // Optional else block
+}
+
+func (is *IfStatement) statementNode()       {}
+func (is *IfStatement) TokenLiteral() string { return is.Token.Literal }
+func (is *IfStatement) String() string {
+	var out string
+	out += "if " + is.Condition.String() + " then\n"
+	out += is.Consequence.String()
+	for _, alt := range is.Alternatives {
+		out += alt.String()
+	}
+	if is.Alternative != nil {
+		out += "else\n"
+		out += is.Alternative.String()
+	}
+	out += "end"
+	return out
+}
+
+// ElseIfClause represents an elseif clause
+type ElseIfClause struct {
+	Token       Token           // The 'elseif' token
+	Condition   Expression      // The condition expression
+	Consequence *BlockStatement // The block to execute
+}
+
+func (eic *ElseIfClause) String() string {
+	return "elseif " + eic.Condition.String() + " then\n" + eic.Consequence.String()
+}
+
+// BlockStatement represents a block of statements
+type BlockStatement struct {
+	Token      Token // The first token of the block
+	Statements []Statement
+}
+
+func (bs *BlockStatement) statementNode()       {}
+func (bs *BlockStatement) TokenLiteral() string { return bs.Token.Literal }
+func (bs *BlockStatement) String() string {
+	var out string
+	for _, s := range bs.Statements {
+		out += s.String() + "\n"
+	}
+	return out
+}
+
 // Identifier represents an identifier
 type Identifier struct {
 	Token Token  // The TOKEN_IDENT token
@@ -271,6 +350,8 @@ func (p *Parser) parseStatement() Statement {
 	switch p.curToken.Type {
 	case TOKEN_MUT:
 		return p.parseAssignmentStatement(true)
+	case TOKEN_IF:
+		return p.parseIfStatement()
 	case TOKEN_IDENT:
 		// Could be assignment or expression statement
 		if p.peekTokenIs(TOKEN_ASSIGN) {
@@ -293,6 +374,165 @@ func (p *Parser) parseExpressionStatement() *ExpressionStatement {
 	stmt.Expression = p.parseExpression(LOWEST)
 
 	return stmt
+}
+
+// parseIfStatement parses an if-then-else statement
+func (p *Parser) parseIfStatement() *IfStatement {
+	stmt := &IfStatement{
+		Token: p.curToken, // 'if'
+	}
+
+	// Move to condition
+	p.nextToken()
+
+	// Parse condition
+	stmt.Condition = p.parseExpression(LOWEST)
+
+	// Expect 'then'
+	if !p.expectPeek(TOKEN_THEN) {
+		return nil
+	}
+
+	// Move past 'then'
+	p.nextToken()
+
+	// Parse consequence block
+	stmt.Consequence = p.parseBlockStatement(TOKEN_ELSEIF, TOKEN_ELSE, TOKEN_END)
+
+	// Handle elseif clauses
+	for p.curTokenIs(TOKEN_ELSEIF) {
+		elseif := &ElseIfClause{
+			Token: p.curToken,
+		}
+
+		// Move to condition
+		p.nextToken()
+
+		// Parse condition
+		elseif.Condition = p.parseExpression(LOWEST)
+
+		// Expect 'then'
+		if !p.expectPeek(TOKEN_THEN) {
+			return nil
+		}
+
+		// Move past 'then'
+		p.nextToken()
+
+		// Parse consequence block
+		elseif.Consequence = p.parseBlockStatement(TOKEN_ELSEIF, TOKEN_ELSE, TOKEN_END)
+
+		stmt.Alternatives = append(stmt.Alternatives, elseif)
+	}
+
+	// Handle else clause
+	if p.curTokenIs(TOKEN_ELSE) {
+		// Move past 'else'
+		p.nextToken()
+
+		// Parse alternative block
+		stmt.Alternative = p.parseBlockStatement(TOKEN_END)
+	}
+
+	// Expect 'end'
+	if !p.curTokenIs(TOKEN_END) {
+		return nil
+	}
+
+	return stmt
+}
+
+// parseIfExpression parses an if expression and returns an IfExpression
+func (p *Parser) parseIfExpression() Expression {
+	expr := &IfExpression{Token: p.curToken}
+
+	// Move to condition
+	p.nextToken()
+
+	// Parse condition
+	expr.Condition = p.parseExpression(LOWEST)
+
+	// Expect 'then'
+	if !p.expectPeek(TOKEN_THEN) {
+		return nil
+	}
+
+	// Move past 'then'
+	p.nextToken()
+
+	// Parse consequence block
+	expr.Consequence = p.parseBlockStatement(TOKEN_ELSEIF, TOKEN_ELSE, TOKEN_END)
+
+	// Handle elseif clauses
+	for p.curTokenIs(TOKEN_ELSEIF) {
+		elseif := &ElseIfClause{Token: p.curToken}
+
+		// Move to condition
+		p.nextToken()
+
+		// Parse condition
+		elseif.Condition = p.parseExpression(LOWEST)
+
+		// Expect 'then'
+		if !p.expectPeek(TOKEN_THEN) {
+			return nil
+		}
+
+		// Move past 'then'
+		p.nextToken()
+
+		// Parse consequence block
+		elseif.Consequence = p.parseBlockStatement(TOKEN_ELSEIF, TOKEN_ELSE, TOKEN_END)
+
+		expr.Alternatives = append(expr.Alternatives, elseif)
+	}
+
+	// Handle else clause
+	if p.curTokenIs(TOKEN_ELSE) {
+		// Move past 'else'
+		p.nextToken()
+
+		// Parse alternative block
+		expr.Alternative = p.parseBlockStatement(TOKEN_END)
+	}
+
+	// Expect 'end'
+	if !p.curTokenIs(TOKEN_END) {
+		return nil
+	}
+
+	return expr
+}
+
+// parseBlockStatement parses a block of statements until one of the terminator tokens
+func (p *Parser) parseBlockStatement(terminators ...TokenType) *BlockStatement {
+	block := &BlockStatement{
+		Token:      p.curToken,
+		Statements: []Statement{},
+	}
+
+	for !p.curTokenIs(TOKEN_EOF) {
+		// Check if we hit a terminator
+		isTerminator := false
+		for _, term := range terminators {
+			if p.curTokenIs(term) {
+				isTerminator = true
+				break
+			}
+		}
+		if isTerminator {
+			break
+		}
+
+		stmt := p.parseStatement()
+		if stmt != nil {
+			block.Statements = append(block.Statements, stmt)
+		}
+
+		p.nextToken()
+	}
+
+	return block
 }
 
 // parseAssignmentStatement parses a variable assignment
@@ -403,9 +643,11 @@ func (p *Parser) parseExpression(precedence int) Expression {
 		if !p.expectPeek(TOKEN_RPAREN) {
 			return nil
 		}
+	case TOKEN_IF:
+		leftExp = p.parseIfExpression()
 	// Keywords that can be used as identifiers in expressions (function names, etc.)
 	case TOKEN_MAKE, TOKEN_FREE, TOKEN_FUNCTION, TOKEN_LOCAL,
-		TOKEN_IF, TOKEN_THEN, TOKEN_ELSE, TOKEN_ELSEIF, TOKEN_END,
+		TOKEN_THEN, TOKEN_ELSE, TOKEN_ELSEIF, TOKEN_END,
 		TOKEN_FOR, TOKEN_WHILE, TOKEN_DO, TOKEN_REPEAT, TOKEN_UNTIL,
 		TOKEN_RETURN, TOKEN_BREAK, TOKEN_IN:
 		// Treat keywords as identifiers in expression context

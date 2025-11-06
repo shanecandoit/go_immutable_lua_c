@@ -575,3 +575,167 @@ func TestPointerUniqueHashes(t *testing.T) {
 		t.Errorf("pointers should have unique hashes, both got: %s", ptr1.Hash)
 	}
 }
+
+func TestIfStatement(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{
+			`
+			mut x = 0
+			if true then
+				x = 10
+			end
+			`,
+			10,
+		},
+		{
+			`
+			mut x = 0
+			if false then
+				x = 10
+			else
+				x = 20
+			end
+			`,
+			20,
+		},
+		{
+			`
+			mut x = 0
+			if false then
+				x = 10
+			elseif true then
+				x = 30
+			else
+				x = 20
+			end
+			`,
+			30,
+		},
+		{
+			`
+			mut x = 0
+			if 5 > 10 then
+				x = 10
+			else
+				x = 20
+			end
+			`,
+			20,
+		},
+		{
+			`
+			mut x = 0
+			if 10 > 5 then
+				x = 10
+			end
+			`,
+			10,
+		},
+	}
+
+	for i, tt := range tests {
+		eval := NewEvaluator()
+		lexer := NewLexer(tt.input)
+		parser := NewParser(lexer)
+		program := parser.ParseProgram()
+
+		// Check for parser errors
+		if len(parser.Errors()) > 0 {
+			t.Errorf("test %d: parser errors:", i)
+			for _, e := range parser.Errors() {
+				t.Errorf("  %s", e)
+			}
+			continue
+		}
+
+		result := eval.Eval(program)
+
+		// Check for evaluation errors
+		if result != nil && result.Type() == ERROR_OBJ {
+			t.Errorf("test %d: evaluation error: %s", i, result.Inspect())
+			continue
+		}
+
+		xVar, ok := eval.env.Get("x")
+		if !ok {
+			t.Errorf("test %d: variable x not found", i)
+			continue
+		}
+
+		intVal, ok := xVar.Value.(*Integer)
+		if !ok {
+			t.Errorf("test %d: expected Integer, got %T", i, xVar.Value)
+			continue
+		}
+
+		if intVal.Value != tt.expected {
+			t.Errorf("test %d: expected %d, got %d", i, tt.expected, intVal.Value)
+		}
+	}
+}
+
+func TestNestedIfStatement(t *testing.T) {
+	input := `
+	mut x = 0
+	if true then
+		if true then
+			x = 42
+		end
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	xVar, _ := eval.env.Get("x")
+	if xVar == nil {
+		t.Fatal("variable x not found")
+	}
+
+	intVal, ok := xVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", xVar.Value)
+	}
+
+	if intVal.Value != 42 {
+		t.Errorf("expected 42, got %d", intVal.Value)
+	}
+}
+
+func TestIfWithMutableVariable(t *testing.T) {
+	input := `
+	mut counter = 0
+	if true then
+		counter = 10
+	end
+	if counter == 10 then
+		counter = 20
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	counterVar, _ := eval.env.Get("counter")
+	if counterVar == nil {
+		t.Fatal("variable counter not found")
+	}
+
+	intVal, ok := counterVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", counterVar.Value)
+	}
+
+	if intVal.Value != 20 {
+		t.Errorf("expected 20, got %d", intVal.Value)
+	}
+}

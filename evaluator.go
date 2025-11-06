@@ -208,6 +208,10 @@ func (ev *Evaluator) Eval(node Node) Object {
 		return ev.evalAssignmentStatement(node)
 	case *ExpressionStatement:
 		return ev.Eval(node.Expression)
+	case *IfStatement:
+		return ev.evalIfStatement(node)
+	case *BlockStatement:
+		return ev.evalBlockStatement(node)
 
 	// Expressions
 	case *IntegerLiteral:
@@ -228,6 +232,8 @@ func (ev *Evaluator) Eval(node Node) Object {
 		return ev.evalPrefixExpression(node)
 	case *CallExpression:
 		return ev.evalCallExpression(node)
+	case *IfExpression:
+		return ev.evalIfExpression(node)
 	}
 
 	return nil
@@ -264,6 +270,100 @@ func (ev *Evaluator) evalAssignmentStatement(stmt *AssignmentStatement) Object {
 	}
 
 	return val
+}
+
+// evalIfStatement evaluates an if statement
+func (ev *Evaluator) evalIfStatement(stmt *IfStatement) Object {
+	condition := ev.Eval(stmt.Condition)
+	if isError(condition) {
+		return condition
+	}
+
+	if isTruthy(condition) {
+		return ev.evalBlockStatement(stmt.Consequence)
+	}
+
+	// Check elseif clauses
+	for _, elseif := range stmt.Alternatives {
+		condition := ev.Eval(elseif.Condition)
+		if isError(condition) {
+			return condition
+		}
+
+		if isTruthy(condition) {
+			return ev.evalBlockStatement(elseif.Consequence)
+		}
+	}
+
+	// Execute else block if present
+	if stmt.Alternative != nil {
+		return ev.evalBlockStatement(stmt.Alternative)
+	}
+
+	return &Nil{}
+}
+
+// evalIfExpression evaluates an if expression
+func (ev *Evaluator) evalIfExpression(expr *IfExpression) Object {
+	condition := ev.Eval(expr.Condition)
+	if isError(condition) {
+		return condition
+	}
+
+	if isTruthy(condition) {
+		return ev.evalBlockStatement(expr.Consequence)
+	}
+
+	// Check elseif clauses
+	for _, elseif := range expr.Alternatives {
+		condition := ev.Eval(elseif.Condition)
+		if isError(condition) {
+			return condition
+		}
+
+		if isTruthy(condition) {
+			return ev.evalBlockStatement(elseif.Consequence)
+		}
+	}
+
+	// Execute else block if present
+	if expr.Alternative != nil {
+		return ev.evalBlockStatement(expr.Alternative)
+	}
+
+	return &Nil{}
+}
+
+// evalBlockStatement evaluates a block statement
+func (ev *Evaluator) evalBlockStatement(block *BlockStatement) Object {
+	var result Object
+
+	for _, statement := range block.Statements {
+		result = ev.Eval(statement)
+
+		if isError(result) {
+			return result
+		}
+	}
+
+	if result == nil {
+		return &Nil{}
+	}
+
+	return result
+}
+
+// isTruthy determines if a value is truthy
+// In Lua: nil and false are falsy, everything else is truthy
+func isTruthy(obj Object) bool {
+	switch obj := obj.(type) {
+	case *Nil:
+		return false
+	case *Boolean:
+		return obj.Value
+	default:
+		return true
+	}
 }
 
 // evalIntegerLiteral evaluates an integer literal
