@@ -117,71 +117,6 @@ func NewMemoryTracker() *MemoryTracker {
 	}
 }
 
-// Variable represents a variable binding with mutability information
-type Variable struct {
-	Value   Object
-	Mutable bool
-	Line    int // Line where declared
-	Column  int // Column where declared
-}
-
-// Environment stores variable bindings
-type Environment struct {
-	store map[string]*Variable
-	outer *Environment
-}
-
-// NewEnvironment creates a new environment
-func NewEnvironment() *Environment {
-	s := make(map[string]*Variable)
-	return &Environment{store: s, outer: nil}
-}
-
-// NewEnclosedEnvironment creates a new environment with an outer environment
-func NewEnclosedEnvironment(outer *Environment) *Environment {
-	env := NewEnvironment()
-	env.outer = outer
-	return env
-}
-
-// Get retrieves a variable from the environment
-func (e *Environment) Get(name string) (*Variable, bool) {
-	obj, ok := e.store[name]
-	if !ok && e.outer != nil {
-		obj, ok = e.outer.Get(name)
-	}
-	return obj, ok
-}
-
-// Set sets a variable in the environment
-func (e *Environment) Set(name string, value Object, mutable bool, line, column int) error {
-	// Check if variable already exists
-	if existing, exists := e.store[name]; exists {
-		// Variable exists, check if it's mutable
-		if !existing.Mutable {
-			return fmt.Errorf("cannot reassign immutable variable '%s' (declared at line %d, col %d)",
-				name, existing.Line, existing.Column)
-		}
-		// Update mutable variable
-		existing.Value = value
-		return nil
-	}
-
-	// Create new variable binding
-	e.store[name] = &Variable{
-		Value:   value,
-		Mutable: mutable,
-		Line:    line,
-		Column:  column,
-	}
-	return nil
-}
-
-// GetAllVariables returns all variables in the environment (for var report)
-func (e *Environment) GetAllVariables() map[string]*Variable {
-	return e.store
-}
-
 // Evaluator evaluates the AST
 type Evaluator struct {
 	env    *Environment
@@ -210,6 +145,10 @@ func (ev *Evaluator) Eval(node Node) Object {
 		return ev.Eval(node.Expression)
 	case *IfStatement:
 		return ev.evalIfStatement(node)
+	case *NumericForStatement:
+		return ev.evalNumericForStatement(node)
+	case *GenericForStatement:
+		return ev.evalGenericForStatement(node)
 	case *BlockStatement:
 		return ev.evalBlockStatement(node)
 
@@ -332,6 +271,112 @@ func (ev *Evaluator) evalIfExpression(expr *IfExpression) Object {
 	}
 
 	return &Nil{}
+}
+
+// evalNumericForStatement evaluates a numeric for loop
+func (ev *Evaluator) evalNumericForStatement(stmt *NumericForStatement) Object {
+	// Evaluate start, end, and step
+	startObj := ev.Eval(stmt.Start)
+	if isError(startObj) {
+		return startObj
+	}
+
+	endObj := ev.Eval(stmt.End)
+	if isError(endObj) {
+		return endObj
+	}
+
+	// Get integer values
+	startInt, ok := startObj.(*Integer)
+	if !ok {
+		return &Error{Message: "for loop start value must be an integer"}
+	}
+
+	endInt, ok := endObj.(*Integer)
+	if !ok {
+		return &Error{Message: "for loop end value must be an integer"}
+	}
+
+	// Get step (default to 1 if not provided)
+	step := int64(1)
+	if stmt.Step != nil {
+		stepObj := ev.Eval(stmt.Step)
+		if isError(stepObj) {
+			return stepObj
+		}
+		stepInt, ok := stepObj.(*Integer)
+		if !ok {
+			return &Error{Message: "for loop step value must be an integer"}
+		}
+		step = stepInt.Value
+	}
+
+	if step == 0 {
+		return &Error{Message: "for loop step cannot be zero"}
+	}
+
+	// Create new environment for loop scope
+	loopEnv := NewEnclosedEnvironment(ev.env)
+	prevEnv := ev.env
+	ev.env = loopEnv
+
+	var result Object = &Nil{}
+
+	// Execute loop
+	i := startInt.Value
+	for {
+		// Check loop condition based on step direction
+		if step > 0 && i > endInt.Value {
+			break
+		}
+		if step < 0 && i < endInt.Value {
+			break
+		}
+
+		// Set/update loop variable
+		// On first iteration, create it; on subsequent iterations, update it directly
+		if loopVar, exists := ev.env.store[stmt.VarName.Value]; exists {
+			loopVar.Value = &Integer{Value: i}
+		} else {
+			ev.env.store[stmt.VarName.Value] = &Variable{
+				Value:   &Integer{Value: i},
+				Mutable: false, // Loop variables are read-only in Lua
+				Line:    stmt.Token.Line,
+				Column:  stmt.Token.Column,
+			}
+		}
+
+		// Execute body
+		result = ev.evalBlockStatement(stmt.Body)
+		if isError(result) {
+			ev.env = prevEnv
+			return result
+		}
+
+		i += step
+	}
+
+	// Restore previous environment
+	ev.env = prevEnv
+
+	return result
+}
+
+// evalGenericForStatement evaluates a generic for loop
+func (ev *Evaluator) evalGenericForStatement(stmt *GenericForStatement) Object {
+	// For now, we'll implement a simple range() function support
+	// In the future, this can be extended to support custom iterators
+
+	// Evaluate iterator expression
+	iteratorObj := ev.Eval(stmt.Iterator)
+	if isError(iteratorObj) {
+		return iteratorObj
+	}
+
+	// Check if it's a call to range() or similar iterator function
+	// For simplicity, we'll just return an error for now
+	// This is a placeholder for future iterator implementation
+	return &Error{Message: "generic for loops with iterators not yet implemented"}
 }
 
 // evalBlockStatement evaluates a block statement

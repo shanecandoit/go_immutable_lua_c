@@ -564,3 +564,107 @@ func TestParseIfExpression(t *testing.T) {
 		t.Fatal("ifExp.Alternative is nil")
 	}
 }
+
+func TestParseNumericForLoop(t *testing.T) {
+	input := `for i = 1, 10 do x = i end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*NumericForStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *NumericForStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if stmt.VarName == nil {
+		t.Fatal("stmt.VarName is nil")
+	}
+
+	if stmt.VarName.Value != "i" {
+		t.Errorf("stmt.VarName.Value not 'i'. got=%s", stmt.VarName.Value)
+	}
+
+	if stmt.Start == nil {
+		t.Fatal("stmt.Start is nil")
+	}
+
+	if stmt.End == nil {
+		t.Fatal("stmt.End is nil")
+	}
+
+	if stmt.Body == nil {
+		t.Fatal("stmt.Body is nil")
+	}
+}
+
+func TestParseNumericForLoopWithStep(t *testing.T) {
+	input := `for i = 1, 10, 2 do x = i end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*NumericForStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *NumericForStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if stmt.Step == nil {
+		t.Fatal("stmt.Step is nil")
+	}
+}
+
+func TestParseGenericForLoop(t *testing.T) {
+	input := `for k, v in pairs(t) do x = v end`
+
+	l := NewLexer(input)
+	p := NewParser(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain 1 statement. got=%d",
+			len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*GenericForStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not *GenericForStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if len(stmt.VarNames) != 2 {
+		t.Fatalf("stmt.VarNames does not contain 2 variables. got=%d", len(stmt.VarNames))
+	}
+
+	if stmt.VarNames[0].Value != "k" {
+		t.Errorf("stmt.VarNames[0].Value not 'k'. got=%s", stmt.VarNames[0].Value)
+	}
+
+	if stmt.VarNames[1].Value != "v" {
+		t.Errorf("stmt.VarNames[1].Value not 'v'. got=%s", stmt.VarNames[1].Value)
+	}
+
+	if stmt.Iterator == nil {
+		t.Fatal("stmt.Iterator is nil")
+	}
+
+	if stmt.Body == nil {
+		t.Fatal("stmt.Body is nil")
+	}
+}

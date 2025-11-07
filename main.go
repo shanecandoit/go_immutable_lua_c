@@ -21,7 +21,7 @@ func main() {
 	program := parser.ParseProgram()
 
 	if len(parser.Errors()) > 0 {
-		fmt.Println("Parser errors:\n")
+		fmt.Println("Parser errors:")
 		for _, err := range parser.Errors() {
 			fmt.Println("- ", err)
 		}

@@ -739,3 +739,162 @@ func TestIfWithMutableVariable(t *testing.T) {
 		t.Errorf("expected 20, got %d", intVal.Value)
 	}
 }
+
+func TestNumericForLoop(t *testing.T) {
+	input := `
+	mut sum = 0
+	for i = 1, 5 do
+		sum = sum + i
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	intVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	// sum of 1+2+3+4+5 = 15
+	if intVal.Value != 15 {
+		t.Errorf("expected 15, got %d", intVal.Value)
+	}
+}
+
+func TestNumericForLoopWithStep(t *testing.T) {
+	input := `
+	mut sum = 0
+	for i = 0, 10, 2 do
+		sum = sum + i
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	intVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	// sum of 0+2+4+6+8+10 = 30
+	if intVal.Value != 30 {
+		t.Errorf("expected 30, got %d", intVal.Value)
+	}
+}
+
+func TestNumericForLoopNegativeStep(t *testing.T) {
+	input := `
+	mut sum = 0
+	for i = 5, 1, -1 do
+		sum = sum + i
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	intVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	// sum of 5+4+3+2+1 = 15
+	if intVal.Value != 15 {
+		t.Errorf("expected 15, got %d", intVal.Value)
+	}
+}
+
+func TestForLoopScope(t *testing.T) {
+	input := `
+	mut x = 100
+	for i = 1, 3 do
+		x = x + i
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	// Check that i doesn't leak outside loop
+	_, exists := eval.env.Get("i")
+	if exists {
+		t.Error("loop variable 'i' should not exist outside loop scope")
+	}
+
+	// Check x was modified
+	xVar, _ := eval.env.Get("x")
+	if xVar == nil {
+		t.Fatal("variable x not found")
+	}
+
+	intVal, ok := xVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", xVar.Value)
+	}
+
+	// 100 + 1 + 2 + 3 = 106
+	if intVal.Value != 106 {
+		t.Errorf("expected 106, got %d", intVal.Value)
+	}
+}
+
+func TestNestedForLoop(t *testing.T) {
+	input := `
+	mut sum = 0
+	for i = 1, 3 do
+		for j = 1, 2 do
+			sum = sum + i * j
+		end
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	intVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	// (1*1 + 1*2) + (2*1 + 2*2) + (3*1 + 3*2) = 3 + 6 + 9 = 18
+	if intVal.Value != 18 {
+		t.Errorf("expected 18, got %d", intVal.Value)
+	}
+}
