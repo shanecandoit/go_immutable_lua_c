@@ -73,39 +73,6 @@ type Error struct {
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
 
-// Pointer represents a SHA256-hashed pointer
-type Pointer struct {
-	Hash     string // SHA256 hash
-	TypeName string // Type (e.g., "int", "string")
-	Size     int64  // Size/count
-	Freed    bool   // Whether it's been freed
-	Metadata *PointerMetadata
-}
-
-func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
-func (p *Pointer) Inspect() string {
-	if p.Freed {
-		return fmt.Sprintf("sha256:%s (freed)", p.Hash[:16])
-	}
-	return fmt.Sprintf("sha256:%s", p.Hash[:16])
-}
-
-// PointerMetadata tracks allocation and access information
-type PointerMetadata struct {
-	AllocLine   int
-	AllocColumn int
-	AllocTime   time.Time
-	LastRead    *AccessInfo
-	LastWrite   *AccessInfo
-}
-
-// AccessInfo tracks when and where a pointer was accessed
-type AccessInfo struct {
-	Line   int
-	Column int
-	Time   time.Time
-}
-
 // MemoryTracker tracks all allocated pointers for free report
 type MemoryTracker struct {
 	allocations map[string]*Pointer
