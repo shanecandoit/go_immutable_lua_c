@@ -31,8 +31,12 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 
 // Get retrieves a variable from the environment
 func (e *Environment) Get(name string) (*Variable, bool) {
+	fmt.Printf("Getting variable '%s'\n", name)
 	obj, ok := e.store[name]
+	// Add debug statement to trace variable retrieval in nested environments
+	fmt.Printf("Searching for variable '%s' in current environment\n", name)
 	if !ok && e.outer != nil {
+		fmt.Printf("Variable '%s' not found in current environment. Checking outer environment.\n", name)
 		obj, ok = e.outer.Get(name)
 	}
 	return obj, ok
@@ -40,28 +44,27 @@ func (e *Environment) Get(name string) (*Variable, bool) {
 
 // Set sets a variable in the environment
 func (e *Environment) Set(name string, value Object, mutable bool, line, column int) error {
+	fmt.Printf("Setting variable '%s' to value: %v\n", name, value)
+
 	// Check if variable already exists in current scope
 	if existing, exists := e.store[name]; exists {
-		// Variable exists in current scope, check if it's mutable
 		if !existing.Mutable {
 			return fmt.Errorf("cannot reassign immutable variable '%s' (declared at line %d, col %d)",
 				name, existing.Line, existing.Column)
 		}
-		// Update mutable variable
 		existing.Value = value
 		return nil
 	}
 
-	// Check if variable exists in outer scope
-	if e.outer != nil {
-		if existing, exists := e.outer.Get(name); exists {
-			// Variable exists in outer scope, check if it's mutable
+	// Check outer environments for existing variable
+	for env := e.outer; env != nil; env = env.outer {
+		if existing, exists := env.store[name]; exists {
 			if !existing.Mutable {
 				return fmt.Errorf("cannot reassign immutable variable '%s' (declared at line %d, col %d)",
 					name, existing.Line, existing.Column)
 			}
-			// Update the variable value (preserve its mutable status and location)
 			existing.Value = value
+			fmt.Printf("Updated variable '%s' in outer environment to value: %v\n", name, value)
 			return nil
 		}
 	}
@@ -73,6 +76,7 @@ func (e *Environment) Set(name string, value Object, mutable bool, line, column 
 		Line:    line,
 		Column:  column,
 	}
+	fmt.Printf("Created new variable '%s' in current environment with value: %v\n", name, value)
 	return nil
 }
 

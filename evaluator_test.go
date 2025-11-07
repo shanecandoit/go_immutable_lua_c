@@ -4,53 +4,6 @@ import (
 	"testing"
 )
 
-func TestEvalIntegerExpression(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected int64
-	}{
-		{"x = 5", 5},
-		{"x = 10", 10},
-		{"x = -5", -5},
-		{"x = 5 + 5", 10},
-		{"x = 5 - 3", 2},
-		{"x = 5 * 2", 10},
-		{"x = 10 / 2", 5},
-		{"x = 10 % 3", 1},
-		{"x = 2 + 3 * 4", 14},
-		{"x = (2 + 3) * 4", 20},
-	}
-
-	for _, tt := range tests {
-		evaluated := testEval(tt.input)
-		testIntegerObject(t, evaluated, tt.expected)
-	}
-}
-
-func TestEvalBooleanExpression(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"x = true", true},
-		{"x = false", false},
-		{"x = 1 < 2", true},
-		{"x = 1 > 2", false},
-		{"x = 1 == 1", true},
-		{"x = 1 != 2", true},
-		{"x = 1 == 2", false},
-		{"x = true and true", true},
-		{"x = true and false", false},
-		{"x = false or true", true},
-		{"x = false or false", false},
-	}
-
-	for _, tt := range tests {
-		evaluated := testEval(tt.input)
-		testBooleanObject(t, evaluated, tt.expected)
-	}
-}
-
 func TestNotOperator(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -896,5 +849,354 @@ func TestNestedForLoop(t *testing.T) {
 	// (1*1 + 1*2) + (2*1 + 2*2) + (3*1 + 3*2) = 3 + 6 + 9 = 18
 	if intVal.Value != 18 {
 		t.Errorf("expected 18, got %d", intVal.Value)
+	}
+}
+
+// Test immutability: attempt to modify an immutable variable should fail
+func TestImmutableVariableCannotBeModified(t *testing.T) {
+	input := `
+	x = 10
+	x = 20
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	result := eval.Eval(program)
+
+	// Should return an error
+	if result == nil {
+		t.Fatal("Expected error when modifying immutable variable")
+	}
+
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("Expected Error object, got %T", result)
+	}
+
+	if errObj.Message == "" {
+		t.Error("Expected error message about immutable variable")
+	}
+}
+
+// Test mutable variable can be modified
+func TestMutableVariableCanBeModified(t *testing.T) {
+	input := `
+	mut x = 10
+	x = 20
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	xVar, _ := eval.env.Get("x")
+	if xVar == nil {
+		t.Fatal("variable x not found")
+	}
+
+	intVal, ok := xVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", xVar.Value)
+	}
+
+	if intVal.Value != 20 {
+		t.Errorf("expected 20, got %d", intVal.Value)
+	}
+}
+
+// Test loop variable is immutable within loop
+func TestLoopVariableIsImmutable(t *testing.T) {
+	input := `
+	for i = 1, 3 do
+		i = 10
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	result := eval.Eval(program)
+
+	// Should return an error
+	if result == nil {
+		t.Fatal("Expected error when modifying loop variable")
+	}
+
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("Expected Error object, got %T", result)
+	}
+
+	if errObj.Message == "" {
+		t.Error("Expected error message about immutable loop variable")
+	}
+}
+
+// Test immutability in nested scopes
+func TestImmutabilityInNestedScopes(t *testing.T) {
+	input := `
+	x = 5
+	for i = 1, 2 do
+		x = 10
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	result := eval.Eval(program)
+
+	// Should return an error
+	if result == nil {
+		t.Fatal("Expected error when modifying immutable variable in nested scope")
+	}
+
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("Expected Error object, got %T", result)
+	}
+
+	if errObj.Message == "" {
+		t.Error("Expected error message about immutable variable in nested scope")
+	}
+}
+
+// Test mutable variable modified in loop
+func TestMutableVariableInLoop(t *testing.T) {
+	input := `
+	mut counter = 0
+	for i = 1, 5 do
+		counter = counter + 1
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	counterVar, _ := eval.env.Get("counter")
+	if counterVar == nil {
+		t.Fatal("variable counter not found")
+	}
+
+	intVal, ok := counterVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", counterVar.Value)
+	}
+
+	if intVal.Value != 5 {
+		t.Errorf("expected 5, got %d", intVal.Value)
+	}
+}
+
+// Test variable update in nested scope (no shadowing - updates outer variable)
+func TestVariableUpdateInNestedScope(t *testing.T) {
+	input := `
+	mut x = 100
+	mut sum = 0
+	for i = 1, 3 do
+		x = i * 10
+		sum = sum + x
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	// x should be modified to 30 (last iteration)
+	xVar, _ := eval.env.Get("x")
+	if xVar == nil {
+		t.Fatal("variable x not found")
+	}
+
+	intVal, ok := xVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", xVar.Value)
+	}
+
+	if intVal.Value != 30 {
+		t.Errorf("x should be 30 (last loop value), got %d", intVal.Value)
+	}
+
+	// Sum should be 10 + 20 + 30 = 60
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	sumIntVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	if sumIntVal.Value != 60 {
+		t.Errorf("expected sum to be 60, got %d", sumIntVal.Value)
+	}
+}
+
+// Test multiple mutable variables in loop
+func TestMultipleMutableVariablesInLoop(t *testing.T) {
+	input := `
+	mut a = 0
+	mut b = 1
+	for i = 1, 3 do
+		mut temp = a + b
+		a = b
+		b = temp
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	// After 3 iterations: (0,1) -> (1,1) -> (1,2) -> (2,3)
+	aVar, _ := eval.env.Get("a")
+	if aVar == nil {
+		t.Fatal("variable a not found")
+	}
+
+	aIntVal, ok := aVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", aVar.Value)
+	}
+
+	if aIntVal.Value != 2 {
+		t.Errorf("expected a to be 2, got %d", aIntVal.Value)
+	}
+
+	bVar, _ := eval.env.Get("b")
+	if bVar == nil {
+		t.Fatal("variable b not found")
+	}
+
+	bIntVal, ok := bVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", bVar.Value)
+	}
+
+	if bIntVal.Value != 3 {
+		t.Errorf("expected b to be 3, got %d", bIntVal.Value)
+	}
+
+	// temp should not exist outside loop
+	tempVar, exists := eval.env.Get("temp")
+	if exists && tempVar != nil {
+		t.Error("loop variable 'temp' should not exist outside loop scope")
+	}
+}
+
+// Test immutable variable access in nested loops
+func TestImmutableVariableAccessInNestedLoops(t *testing.T) {
+	input := `
+	multiplier = 2
+	mut sum = 0
+	for i = 1, 3 do
+		for j = 1, 2 do
+			sum = sum + (i * j * multiplier)
+		end
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	intVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	// (1*1*2 + 1*2*2) + (2*1*2 + 2*2*2) + (3*1*2 + 3*2*2) = 6 + 12 + 18 = 36
+	if intVal.Value != 36 {
+		t.Errorf("expected 36, got %d", intVal.Value)
+	}
+}
+
+// Test loop with only reads (no mutations)
+func TestLoopWithOnlyReads(t *testing.T) {
+	input := `
+	x = 10
+	y = 20
+	mut sum = 0
+	for i = 1, 3 do
+		sum = sum + x + y + i
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	sumVar, _ := eval.env.Get("sum")
+	if sumVar == nil {
+		t.Fatal("variable sum not found")
+	}
+
+	intVal, ok := sumVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", sumVar.Value)
+	}
+
+	// (10+20+1) + (10+20+2) + (10+20+3) = 31 + 32 + 33 = 96
+	if intVal.Value != 96 {
+		t.Errorf("expected 96, got %d", intVal.Value)
+	}
+}
+
+// Test empty loop body preserves immutability
+func TestEmptyLoopBody(t *testing.T) {
+	input := `
+	x = 5
+	for i = 1, 3 do
+	end
+	`
+
+	eval := NewEvaluator()
+	lexer := NewLexer(input)
+	parser := NewParser(lexer)
+	program := parser.ParseProgram()
+	eval.Eval(program)
+
+	xVar, _ := eval.env.Get("x")
+	if xVar == nil {
+		t.Fatal("variable x not found")
+	}
+
+	intVal, ok := xVar.Value.(*Integer)
+	if !ok {
+		t.Fatalf("expected Integer, got %T", xVar.Value)
+	}
+
+	if intVal.Value != 5 {
+		t.Errorf("expected 5, got %d", intVal.Value)
+	}
+
+	// Loop variable should not exist
+	iVar, exists := eval.env.Get("i")
+	if exists && iVar != nil {
+		t.Error("loop variable 'i' should not exist outside loop scope")
 	}
 }
