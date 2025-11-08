@@ -1,38 +1,41 @@
 package main
 
-import "fmt"
-
 // evalIfStatement evaluates an if statement
 func (ev *Evaluator) evalIfStatement(stmt *IfStatement) Object {
-	fmt.Println("Evaluating if condition")
 	condition := ev.Eval(stmt.Condition)
 	if isError(condition) {
 		return condition
 	}
-	fmt.Printf("Condition evaluated to: %v\n", condition)
+
 	if isTruthy(condition) {
-		fmt.Println("Condition is truthy, evaluating consequence block")
-		return ev.evalBlockStatement(stmt.Consequence)
+		return ev.evalScopedBlockStatement(stmt.Consequence)
 	}
 
 	// Check elseif clauses
 	for _, elseif := range stmt.Alternatives {
-		fmt.Println("Evaluating elseif condition")
 		condition := ev.Eval(elseif.Condition)
 		if isError(condition) {
 			return condition
 		}
-		fmt.Printf("Elseif condition evaluated to: %v\n", condition)
 		if isTruthy(condition) {
-			fmt.Println("Elseif condition is truthy, evaluating consequence block")
-			return ev.evalBlockStatement(elseif.Consequence)
+			return ev.evalScopedBlockStatement(elseif.Consequence)
 		}
 	}
 
 	if stmt.Alternative != nil {
-		fmt.Println("Evaluating else block")
-		return ev.evalBlockStatement(stmt.Alternative)
+		return ev.evalScopedBlockStatement(stmt.Alternative)
 	}
 
 	return &Nil{}
+}
+
+// evalScopedBlockStatement evaluates a block statement in a new scope
+func (ev *Evaluator) evalScopedBlockStatement(block *BlockStatement) Object {
+	env := NewEnclosedEnvironment(ev.env)
+	ev.env = env
+	defer func() {
+		ev.env = ev.env.outer
+	}()
+
+	return ev.evalBlockStatement(block)
 }

@@ -100,47 +100,52 @@ func NewEvaluator() *Evaluator {
 
 // Eval evaluates a node
 func (ev *Evaluator) Eval(node Node) Object {
-	switch node := node.(type) {
-	// Program
+	switch n := node.(type) {
 	case *Program:
-		return ev.evalProgram(node)
-
-	// Statements
-	case *AssignmentStatement:
-		return ev.evalAssignmentStatement(node)
+		return ev.evalProgram(n)
 	case *ExpressionStatement:
-		return ev.Eval(node.Expression)
-	case *IfStatement:
-		return ev.evalIfStatement(node)
-	case *NumericForStatement:
-		return ev.evalNumericForStatement(node)
-	case *GenericForStatement:
-		return ev.evalGenericForStatement(node)
-	case *BlockStatement:
-		return ev.evalBlockStatement(node)
-
-	// Expressions
+		return ev.Eval(n.Expression)
 	case *IntegerLiteral:
-		return ev.evalIntegerLiteral(node)
+		return ev.evalIntegerLiteral(n)
 	case *FloatLiteral:
-		return ev.evalFloatLiteral(node)
+		return ev.evalFloatLiteral(n)
 	case *StringLiteral:
-		return &String{Value: node.Value}
+		return &String{Value: n.Value}
 	case *BooleanLiteral:
-		return &Boolean{Value: node.Value}
+		return &Boolean{Value: n.Value}
 	case *NilLiteral:
 		return &Nil{}
-	case *Identifier:
-		return ev.evalIdentifier(node)
-	case *InfixExpression:
-		return ev.evalInfixExpression(node)
 	case *PrefixExpression:
-		return ev.evalPrefixExpression(node)
+		return ev.evalPrefixExpression(n)
+	case *InfixExpression:
+		return ev.evalInfixExpression(n)
+	case *IfStatement:
+		return ev.evalIfStatement(n)
+	case *IfExpression:
+		return ev.evalIfExpression(n)
+	case *BlockStatement:
+		return ev.evalBlockStatement(n)
+	case *AssignmentStatement:
+		value := ev.Eval(n.Value)
+		if isError(value) {
+			return value
+		}
+		err := ev.env.Set(n.Name.String(), value, n.Mutable, n.Token.Line, n.Token.Column)
+		if err != nil {
+			return &Error{Message: err.Error()}
+		}
+		return value
+	case *Identifier:
+		return ev.evalIdentifier(n)
+	case *NumericForStatement:
+		return ev.evalNumericForStatement(n)
+	case *GenericForStatement:
+		return ev.evalGenericForStatement(n)
 	case *CallExpression:
-		return ev.evalCallExpression(node)
+		return ev.evalCallExpression(n)
+	default:
+		return &Error{Message: fmt.Sprintf("unhandled node type: %T", n)}
 	}
-
-	return nil
 }
 
 // evalProgram evaluates a program
@@ -159,28 +164,8 @@ func (ev *Evaluator) evalProgram(program *Program) Object {
 	return result
 }
 
-// evalAssignmentStatement evaluates an assignment statement
-func (ev *Evaluator) evalAssignmentStatement(stmt *AssignmentStatement) Object {
-	fmt.Printf("Assigning value to variable '%s'\n", stmt.Name.Value)
-	// Evaluate the value expression
-	val := ev.Eval(stmt.Value)
-	if isError(val) {
-		return val
-	}
-
-	// Set the variable in the environment
-	err := ev.env.Set(stmt.Name.Value, val, stmt.Mutable, stmt.Token.Line, stmt.Token.Column)
-	if err != nil {
-		return &Error{Message: err.Error()}
-	}
-
-	return val
-}
-
 // evalNumericForStatement evaluates a numeric for loop
 func (ev *Evaluator) evalNumericForStatement(stmt *NumericForStatement) Object {
-	fmt.Printf("Entering numeric for loop: start=%v, end=%v, step=%v\n", stmt.Start, stmt.End, stmt.Step)
-
 	// Evaluate start, end, and step
 	startObj := ev.Eval(stmt.Start)
 	if isError(startObj) {
@@ -221,15 +206,17 @@ func (ev *Evaluator) evalNumericForStatement(stmt *NumericForStatement) Object {
 		return &Error{Message: "for loop step cannot be zero"}
 	}
 
-	fmt.Printf("Loop parameters: start=%d, end=%d, step=%d\n", startInt.Value, endInt.Value, step)
-
 	// Create new environment for loop scope
 	loopEnv := NewEnclosedEnvironment(ev.env)
 	prevEnv := ev.env
 	ev.env = loopEnv
-	fmt.Println("Created new loop environment")
 
 	var result Object = &Nil{}
+
+	// Create loop variable as immutable
+	if err := ev.env.Set(stmt.VarName.Value, &Integer{Value: startInt.Value}, false, stmt.Token.Line, stmt.Token.Column); err != nil {
+		return &Error{Message: err.Error()}
+	}
 
 	// Execute loop
 	i := startInt.Value
@@ -242,35 +229,14 @@ func (ev *Evaluator) evalNumericForStatement(stmt *NumericForStatement) Object {
 			break
 		}
 
-		// Set/update loop variable
-		if loopVar, exists := ev.env.store[stmt.VarName.Value]; exists {
-			loopVar.Value = &Integer{Value: i}
-			fmt.Printf("Updated loop variable '%s' to %d\n", stmt.VarName.Value, i)
-		} else {
-			ev.env.store[stmt.VarName.Value] = &Variable{
-				Value:   &Integer{Value: i},
-				Mutable: false, // Loop variables are read-only in Lua
-				Line:    stmt.Token.Line,
-				Column:  stmt.Token.Column,
-			}
-			fmt.Printf("Created loop variable '%s' with value %d\n", stmt.VarName.Value, i)
-		}
+		// Update loop variable directly
+		ev.env.Update(stmt.VarName.Value, &Integer{Value: i})
 
 		// Execute body
-		fmt.Printf("Executing loop body with '%s' = %d\n", stmt.VarName.Value, i)
 		result = ev.evalBlockStatement(stmt.Body)
 		if isError(result) {
 			ev.env = prevEnv
-			fmt.Println("Error in loop body, restoring previous environment")
 			return result
-		}
-
-		// Update outer environment for variables modified in the loop
-		for name, variable := range ev.env.store {
-			if outerVar, exists := prevEnv.store[name]; exists && outerVar.Mutable {
-				outerVar.Value = variable.Value
-				fmt.Printf("Updated outer variable '%s' to %v\n", name, variable.Value)
-			}
 		}
 
 		i += step
@@ -278,7 +244,6 @@ func (ev *Evaluator) evalNumericForStatement(stmt *NumericForStatement) Object {
 
 	// Restore previous environment
 	ev.env = prevEnv
-	fmt.Println("Restored previous environment after loop")
 
 	return result
 }
@@ -302,29 +267,17 @@ func (ev *Evaluator) evalGenericForStatement(stmt *GenericForStatement) Object {
 
 // evalBlockStatement evaluates a block statement
 func (ev *Evaluator) evalBlockStatement(block *BlockStatement) Object {
-	// Create a new environment for the block
-	outerEnv := ev.env
-	ev.env = NewEnclosedEnvironment(outerEnv)
-	fmt.Printf("Entering new block environment\n")
-	defer func() {
-		fmt.Printf("Exiting block environment\n")
-		ev.env = outerEnv
-	}()
-
 	var result Object
 
 	for _, statement := range block.Statements {
-		fmt.Printf("Evaluating statement: %T\n", statement)
 		result = ev.Eval(statement)
 
 		if isError(result) {
-			fmt.Printf("Error encountered: %v\n", result)
 			return result
 		}
 	}
 
 	if result == nil {
-		fmt.Println("Block result is nil, returning Nil object")
 		return &Nil{}
 	}
 
@@ -536,11 +489,13 @@ func (ev *Evaluator) evalPrefixExpression(node *PrefixExpression) Object {
 
 // evalMinusPrefixOperator evaluates the minus prefix operator
 func (ev *Evaluator) evalMinusPrefixOperator(right Object) Object {
+	if right.Type() == FLOAT_OBJ {
+		return &Float{Value: -right.(*Float).Value}
+	}
+
 	switch right.Type() {
 	case INTEGER_OBJ:
 		return &Integer{Value: -right.(*Integer).Value}
-	case FLOAT_OBJ:
-		return &Float{Value: -right.(*Float).Value}
 	default:
 		return &Error{Message: fmt.Sprintf("unknown operator: -%s", right.Type())}
 	}
@@ -548,6 +503,10 @@ func (ev *Evaluator) evalMinusPrefixOperator(right Object) Object {
 
 // evalNotPrefixOperator evaluates the not prefix operator
 func (ev *Evaluator) evalNotPrefixOperator(right Object) Object {
+	if right == nil {
+		return &Boolean{Value: true}
+	}
+
 	switch right.Type() {
 	case BOOLEAN_OBJ:
 		return &Boolean{Value: !right.(*Boolean).Value}

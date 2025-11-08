@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -250,7 +251,12 @@ func testEval(input string) Object {
 	program := parser.ParseProgram()
 	eval := NewEvaluator()
 
-	return eval.Eval(program)
+	// Debugging testEval
+	fmt.Printf("Evaluating input: %s\n", input)
+	fmt.Printf("Parsed program: %+v\n", program)
+	result := eval.Eval(program)
+	fmt.Printf("Evaluation result: %+v\n", result)
+	return result
 }
 
 func testIntegerObject(t *testing.T, obj Object, expected int64) bool {
