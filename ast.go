@@ -225,6 +225,23 @@ func (g *GenericForStatement) String() string {
 // Add statementNode method for GenericForStatement
 func (g *GenericForStatement) statementNode() {}
 
+// ReturnStatement represents a return statement
+type ReturnStatement struct {
+	Token       Token
+	ReturnValue Expression
+}
+
+func (rs *ReturnStatement) statementNode()       {}
+func (rs *ReturnStatement) TokenLiteral() string { return rs.Token.Literal }
+func (rs *ReturnStatement) String() string {
+	var out string
+	out += "return "
+	if rs.ReturnValue != nil {
+		out += rs.ReturnValue.String()
+	}
+	return out
+}
+
 // IntegerLiteral represents an integer literal
 type IntegerLiteral struct {
 	Token Token
@@ -340,6 +357,30 @@ func (i *InfixExpression) String() string {
 
 // Add expressionNode method for InfixExpression
 func (i *InfixExpression) expressionNode() {}
+
+// FunctionLiteral represents a function definition
+type FunctionLiteral struct {
+	Token      Token
+	Parameters []*Identifier
+	Body       *BlockStatement
+}
+
+func (fl *FunctionLiteral) expressionNode()      {}
+func (fl *FunctionLiteral) TokenLiteral() string { return fl.Token.Literal }
+func (fl *FunctionLiteral) String() string {
+	var out string
+	out += "function("
+	for i, p := range fl.Parameters {
+		if i > 0 {
+			out += ", "
+		}
+		out += p.String()
+	}
+	out += ") "
+	out += fl.Body.String()
+	out += " end"
+	return out
+}
 
 // CallExpression represents a function call
 type CallExpression struct {

@@ -2,15 +2,23 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 )
 
 // Parser represents the parser
 type Parser struct {
-	lexer     *Lexer
-	curToken  Token
-	peekToken Token
-	errors    []string
+	lexer          *Lexer
+	curToken       Token
+	peekToken      Token
+	errors         []string
+	prefixParseFns map[TokenType]prefixParseFn
+	infixParseFns  map[TokenType]infixParseFn
 }
+
+type (
+	prefixParseFn func() Expression
+	infixParseFn  func(Expression) Expression
+)
 
 // NewParser creates a new parser
 func NewParser(l *Lexer) *Parser {
@@ -19,11 +27,55 @@ func NewParser(l *Lexer) *Parser {
 		errors: []string{},
 	}
 
+	p.prefixParseFns = make(map[TokenType]prefixParseFn)
+	p.registerPrefix(TOKEN_IDENT, p.parseIdentifier)
+	p.registerPrefix(TOKEN_NUMBER, p.parseNumberLiteral)
+	p.registerPrefix(TOKEN_STRING, p.parseStringLiteral)
+	p.registerPrefix(TOKEN_MAKE, p.parseIdentifier)
+	p.registerPrefix(TOKEN_FREE, p.parseIdentifier)
+	p.registerPrefix(TOKEN_TRUE, p.parseBoolean)
+	p.registerPrefix(TOKEN_FALSE, p.parseBoolean)
+	p.registerPrefix(TOKEN_NIL, p.parseNil)
+	p.registerPrefix(TOKEN_MINUS, p.parsePrefixExpression)
+	p.registerPrefix(TOKEN_NOT, p.parsePrefixExpression)
+	p.registerPrefix(TOKEN_STAR, p.parsePrefixExpression)
+	p.registerPrefix(TOKEN_AMPERSAND, p.parsePrefixExpression)
+	p.registerPrefix(TOKEN_HASH, p.parsePrefixExpression)
+	p.registerPrefix(TOKEN_LPAREN, p.parseGroupedExpression)
+	p.registerPrefix(TOKEN_IF, p.parseIfExpression)
+	p.registerPrefix(TOKEN_FUNCTION, p.parseFunctionLiteral)
+
+	p.infixParseFns = make(map[TokenType]infixParseFn)
+	p.registerInfix(TOKEN_PLUS, p.parseInfixExpression)
+	p.registerInfix(TOKEN_MINUS, p.parseInfixExpression)
+	p.registerInfix(TOKEN_SLASH, p.parseInfixExpression)
+	p.registerInfix(TOKEN_STAR, p.parseInfixExpression)
+	p.registerInfix(TOKEN_PERCENT, p.parseInfixExpression)
+	p.registerInfix(TOKEN_EQ, p.parseInfixExpression)
+	p.registerInfix(TOKEN_NE, p.parseInfixExpression)
+	p.registerInfix(TOKEN_LT, p.parseInfixExpression)
+	p.registerInfix(TOKEN_LE, p.parseInfixExpression)
+	p.registerInfix(TOKEN_GT, p.parseInfixExpression)
+	p.registerInfix(TOKEN_GE, p.parseInfixExpression)
+	p.registerInfix(TOKEN_AND, p.parseInfixExpression)
+	p.registerInfix(TOKEN_OR, p.parseInfixExpression)
+	p.registerInfix(TOKEN_CONCAT, p.parseInfixExpression)
+	p.registerInfix(TOKEN_CARET, p.parseInfixExpression)
+	p.registerInfix(TOKEN_LPAREN, p.parseCallExpression)
+
 	// Read two tokens, so curToken and peekToken are both set
 	p.nextToken()
 	p.nextToken()
 
 	return p
+}
+
+func (p *Parser) registerPrefix(tokenType TokenType, fn prefixParseFn) {
+	p.prefixParseFns[tokenType] = fn
+}
+
+func (p *Parser) registerInfix(tokenType TokenType, fn infixParseFn) {
+	p.infixParseFns[tokenType] = fn
 }
 
 // Errors returns the parser errors
@@ -72,7 +124,13 @@ func (p *Parser) ParseProgram() *Program {
 	for !p.curTokenIs(TOKEN_EOF) {
 		stmt := p.parseStatement()
 		if stmt != nil {
-			program.Statements = append(program.Statements, stmt)
+			// Avoid appending typed-nil values (e.g., (*X)(nil) stored in an interface)
+			rv := reflect.ValueOf(stmt)
+			if rv.Kind() == reflect.Ptr && rv.IsNil() {
+				// skip
+			} else {
+				program.Statements = append(program.Statements, stmt)
+			}
 		}
 		p.nextToken()
 	}
@@ -89,6 +147,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseIfStatement()
 	case TOKEN_FOR:
 		return p.parseForStatement()
+	case TOKEN_RETURN:
+		return p.parseReturnStatement()
 	case TOKEN_IDENT:
 		// Could be assignment or expression statement
 		if p.peekTokenIs(TOKEN_ASSIGN) {
@@ -108,8 +168,12 @@ func (p *Parser) parseExpressionStatement() *ExpressionStatement {
 		Token: p.curToken,
 	}
 
-	stmt.Expression = p.parseExpression(LOWEST)
+	expr := p.parseExpression(LOWEST)
+	if expr == nil {
+		return nil
+	}
 
+	stmt.Expression = expr
 	return stmt
 }
 
@@ -436,7 +500,21 @@ func (p *Parser) parseAssignmentStatement(mutable bool) *AssignmentStatement {
 	p.nextToken()
 
 	// Parse the value expression
-	stmt.Value = p.parseExpression(LOWEST)
+	val := p.parseExpression(LOWEST)
+	if val == nil {
+		return nil
+	}
+	stmt.Value = val
+
+	return stmt
+}
+
+func (p *Parser) parseReturnStatement() *ReturnStatement {
+	stmt := &ReturnStatement{Token: p.curToken}
+
+	p.nextToken()
+
+	stmt.ReturnValue = p.parseExpression(LOWEST)
 
 	return stmt
 }
@@ -489,63 +567,93 @@ func (p *Parser) curPrecedence() int {
 	return LOWEST
 }
 
-// parseExpression parses an expression
 func (p *Parser) parseExpression(precedence int) Expression {
-	// Parse prefix
-	var leftExp Expression
-
-	switch p.curToken.Type {
-	case TOKEN_IDENT:
-		leftExp = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	case TOKEN_NUMBER:
-		leftExp = p.parseNumberLiteral()
-	case TOKEN_STRING:
-		leftExp = &StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
-	case TOKEN_TRUE:
-		leftExp = &BooleanLiteral{Token: p.curToken, Value: true}
-	case TOKEN_FALSE:
-		leftExp = &BooleanLiteral{Token: p.curToken, Value: false}
-	case TOKEN_NIL:
-		leftExp = &NilLiteral{Token: p.curToken}
-	case TOKEN_MINUS, TOKEN_NOT, TOKEN_STAR, TOKEN_AMPERSAND, TOKEN_HASH:
-		leftExp = p.parsePrefixExpression()
-	case TOKEN_LPAREN:
-		p.nextToken()
-		leftExp = p.parseExpression(LOWEST)
-		if !p.expectPeek(TOKEN_RPAREN) {
-			return nil
-		}
-	case TOKEN_IF:
-		leftExp = p.parseIfExpression()
-	// Keywords that can be used as identifiers in expressions (function names, etc.)
-	case TOKEN_MAKE, TOKEN_FREE, TOKEN_FUNCTION, TOKEN_LOCAL,
-		TOKEN_THEN, TOKEN_ELSE, TOKEN_ELSEIF, TOKEN_END,
-		TOKEN_FOR, TOKEN_WHILE, TOKEN_DO, TOKEN_REPEAT, TOKEN_UNTIL,
-		TOKEN_RETURN, TOKEN_BREAK, TOKEN_IN:
-		// Treat keywords as identifiers in expression context
-		leftExp = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	default:
+	prefix := p.prefixParseFns[p.curToken.Type]
+	if prefix == nil {
 		p.noPrefixParseFnError(p.curToken.Type)
 		return nil
 	}
+	leftExp := prefix()
 
-	// Parse infix
 	for !p.peekTokenIs(TOKEN_EOF) && precedence < p.peekPrecedence() {
-		switch p.peekToken.Type {
-		case TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
-			TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE,
-			TOKEN_AND, TOKEN_OR, TOKEN_CONCAT, TOKEN_CARET:
-			p.nextToken()
-			leftExp = p.parseInfixExpression(leftExp)
-		case TOKEN_LPAREN:
-			p.nextToken()
-			leftExp = p.parseCallExpression(leftExp)
-		default:
+		infix := p.infixParseFns[p.peekToken.Type]
+		if infix == nil {
 			return leftExp
 		}
+		p.nextToken()
+		leftExp = infix(leftExp)
 	}
 
 	return leftExp
+}
+
+func (p *Parser) parseIdentifier() Expression {
+	return &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+func (p *Parser) parseStringLiteral() Expression {
+	return &StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+func (p *Parser) parseBoolean() Expression {
+	return &BooleanLiteral{Token: p.curToken, Value: p.curTokenIs(TOKEN_TRUE)}
+}
+
+func (p *Parser) parseNil() Expression {
+	return &NilLiteral{Token: p.curToken}
+}
+
+func (p *Parser) parseGroupedExpression() Expression {
+	p.nextToken()
+	exp := p.parseExpression(LOWEST)
+	if !p.expectPeek(TOKEN_RPAREN) {
+		return nil
+	}
+	return exp
+}
+
+func (p *Parser) parseFunctionLiteral() Expression {
+	lit := &FunctionLiteral{Token: p.curToken}
+
+	if !p.expectPeek(TOKEN_LPAREN) {
+		return nil
+	}
+
+	lit.Parameters = p.parseFunctionParameters()
+
+	// after parseFunctionParameters, curToken is ')'
+	p.nextToken()
+
+	lit.Body = p.parseBlockStatement(TOKEN_END)
+
+	return lit
+}
+
+func (p *Parser) parseFunctionParameters() []*Identifier {
+	identifiers := []*Identifier{}
+
+	if p.peekTokenIs(TOKEN_RPAREN) {
+		p.nextToken()
+		return identifiers
+	}
+
+	p.nextToken()
+
+	ident := &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	identifiers = append(identifiers, ident)
+
+	for p.peekTokenIs(TOKEN_COMMA) {
+		p.nextToken()
+		p.nextToken()
+		ident := &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		identifiers = append(identifiers, ident)
+	}
+
+	if !p.expectPeek(TOKEN_RPAREN) {
+		return nil
+	}
+
+	return identifiers
 }
 
 // parseNumberLiteral parses a number literal (int or float)

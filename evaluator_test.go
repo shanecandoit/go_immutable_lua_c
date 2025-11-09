@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -251,11 +250,7 @@ func testEval(input string) Object {
 	program := parser.ParseProgram()
 	eval := NewEvaluator()
 
-	// Debugging testEval
-	fmt.Printf("Evaluating input: %s\n", input)
-	fmt.Printf("Parsed program: %+v\n", program)
 	result := eval.Eval(program)
-	fmt.Printf("Evaluation result: %+v\n", result)
 	return result
 }
 
@@ -292,7 +287,7 @@ func testBooleanObject(t *testing.T, obj Object, expected bool) bool {
 }
 
 func TestMakeFunction(t *testing.T) {
-	input := `ptr = make(int, 100)`
+	input := `ptr = make("int", 100)`
 
 	eval := NewEvaluator()
 	lexer := NewLexer(input)
@@ -330,7 +325,7 @@ func TestMakeFunction(t *testing.T) {
 
 func TestMakeAndFree(t *testing.T) {
 	input := `
-	ptr = make(int, 100)
+	ptr = make("int", 100)
 	free(ptr)
 	`
 
@@ -364,7 +359,7 @@ func TestMakeAndFree(t *testing.T) {
 
 func TestDoubleFree(t *testing.T) {
 	input := `
-	ptr = make(int, 100)
+	ptr = make("int", 100)
 	free(ptr)
 	free(ptr)
 	`
@@ -416,10 +411,10 @@ func TestMakeInvalidArguments(t *testing.T) {
 		input           string
 		expectedMessage string
 	}{
-		{`ptr = make(int)`, "make() requires 2 arguments"},
-		{`ptr = make(int, "abc")`, "make() second argument must be an integer"},
-		{`ptr = make(int, 0)`, "make() size must be positive"},
-		{`ptr = make(int, -5)`, "make() size must be positive"},
+		{`ptr = make("int")`, "make() requires 2 arguments"},
+		{`ptr = make("int", "abc")`, "make() second argument must be an integer"},
+		{`ptr = make("int", 0)`, "make() size must be positive"},
+		{`ptr = make("int", -5)`, "make() size must be positive"},
 	}
 
 	for _, tt := range tests {
@@ -438,9 +433,9 @@ func TestMakeInvalidArguments(t *testing.T) {
 
 func TestMultipleAllocations(t *testing.T) {
 	input := `
-	ptr1 = make(int, 10)
-	ptr2 = make(string, 20)
-	ptr3 = make(float, 30)
+	ptr1 = make("int", 10)
+	ptr2 = make("string", 20)
+	ptr3 = make("float", 30)
 	`
 
 	eval := NewEvaluator()
@@ -457,8 +452,8 @@ func TestMultipleAllocations(t *testing.T) {
 
 func TestMemoryLeakDetection(t *testing.T) {
 	input := `
-	ptr1 = make(int, 10)
-	ptr2 = make(string, 20)
+	ptr1 = make("int", 10)
+	ptr2 = make("string", 20)
 	free(ptr1)
 	`
 
@@ -490,7 +485,7 @@ func TestMemoryLeakDetection(t *testing.T) {
 }
 
 func TestPointerInspect(t *testing.T) {
-	input := `ptr = make(int, 100)`
+	input := `ptr = make("int", 100)`
 
 	eval := NewEvaluator()
 	lexer := NewLexer(input)
@@ -514,8 +509,8 @@ func TestPointerInspect(t *testing.T) {
 
 func TestPointerUniqueHashes(t *testing.T) {
 	input := `
-	ptr1 = make(int, 100)
-	ptr2 = make(int, 100)
+	ptr1 = make("int", 100)
+	ptr2 = make("int", 100)
 	`
 
 	eval := NewEvaluator()
@@ -626,7 +621,7 @@ func TestIfStatement(t *testing.T) {
 
 		intVal, ok := xVar.Value.(*Integer)
 		if !ok {
-			t.Errorf("test %d: expected Integer, got %T", i, xVar.Value)
+			t.Fatalf("test %d: expected Integer, got %T", i, xVar.Value)
 			continue
 		}
 
@@ -1205,4 +1200,61 @@ func TestEmptyLoopBody(t *testing.T) {
 	if exists && iVar != nil {
 		t.Error("loop variable 'i' should not exist outside loop scope")
 	}
+}
+
+func TestFunctionObject(t *testing.T) {
+	input := "add = function(x, y) return x + y end"
+	evaluated := testEval(input)
+
+	fn, ok := evaluated.(*Function)
+	if !ok {
+		t.Fatalf("object is not Function. got=%T (%+v)", evaluated, evaluated)
+	}
+
+	if len(fn.Parameters) != 2 {
+		t.Fatalf("function has wrong parameters. Parameters=%+v", fn.Parameters)
+	}
+
+	if fn.Parameters[0].String() != "x" {
+		t.Fatalf("parameter is not 'x'. got=%q", fn.Parameters[0])
+	}
+
+	if fn.Parameters[1].String() != "y" {
+		t.Fatalf("parameter is not 'y'. got=%q", fn.Parameters[1])
+	}
+
+	expectedBody := "return (x + y)"
+	if fn.Body.String() != expectedBody {
+		t.Fatalf("body is not %q. got=%q", expectedBody, fn.Body.String())
+	}
+}
+
+func TestFunctionApplication(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"identity = function(x) return x end; identity(5)", 5},
+		{"double = function(x) return x * 2 end; double(5)", 10},
+		{"add = function(x, y) return x + y end; add(5, 5)", 10},
+		{"add = function(x, y) return x + y end; add(5 + 5, add(5, 5))", 20},
+		{"function(x) return x end(5)", 5},
+	}
+
+	for _, tt := range tests {
+		testIntegerObject(t, testEval(tt.input), tt.expected)
+	}
+}
+
+func TestClosures(t *testing.T) {
+	input := `
+	newAdder = function(x)
+		return function(y) return x + y end
+	end
+
+	addTwo = newAdder(2)
+	addTwo(2)
+	`
+
+	testIntegerObject(t, testEval(input), 4)
 }

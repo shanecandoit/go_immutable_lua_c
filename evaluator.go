@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -11,14 +12,16 @@ import (
 type ObjectType string
 
 const (
-	INTEGER_OBJ  ObjectType = "INTEGER"
-	FLOAT_OBJ    ObjectType = "FLOAT"
-	BOOLEAN_OBJ  ObjectType = "BOOLEAN"
-	STRING_OBJ   ObjectType = "STRING"
-	NIL_OBJ      ObjectType = "NIL"
-	ERROR_OBJ    ObjectType = "ERROR"
-	FUNCTION_OBJ ObjectType = "FUNCTION"
-	POINTER_OBJ  ObjectType = "POINTER"
+	INTEGER_OBJ      ObjectType = "INTEGER"
+	FLOAT_OBJ        ObjectType = "FLOAT"
+	BOOLEAN_OBJ      ObjectType = "BOOLEAN"
+	STRING_OBJ       ObjectType = "STRING"
+	NIL_OBJ          ObjectType = "NIL"
+	ERROR_OBJ        ObjectType = "ERROR"
+	FUNCTION_OBJ     ObjectType = "FUNCTION"
+	POINTER_OBJ      ObjectType = "POINTER"
+	RETURN_VALUE_OBJ ObjectType = "RETURN_VALUE"
+	BUILTIN_OBJ      ObjectType = "BUILTIN"
 )
 
 // Object represents a value in the interpreter
@@ -26,6 +29,22 @@ type Object interface {
 	Type() ObjectType
 	Inspect() string
 }
+
+// ReturnValue wraps a return value
+type ReturnValue struct {
+	Value Object
+}
+
+func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
+func (rv *ReturnValue) Inspect() string  { return rv.Value.Inspect() }
+
+// Builtin represents a built-in function
+type Builtin struct {
+	Fn func(ev *Evaluator, args ...Object) Object
+}
+
+func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
+func (b *Builtin) Inspect() string  { return "builtin function" }
 
 // Integer represents an integer value
 type Integer struct {
@@ -73,6 +92,18 @@ type Error struct {
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
 
+// Function represents a user-defined function
+type Function struct {
+	Parameters []*Identifier
+	Body       *BlockStatement
+	Env        *Environment
+}
+
+func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
+func (f *Function) Inspect() string {
+	return "function"
+}
+
 // MemoryTracker tracks all allocated pointers for free report
 type MemoryTracker struct {
 	allocations map[string]*Pointer
@@ -100,6 +131,14 @@ func NewEvaluator() *Evaluator {
 
 // Eval evaluates a node
 func (ev *Evaluator) Eval(node Node) Object {
+	if node == nil {
+		return &Nil{}
+	}
+	// Handle typed nil pointers (e.g., var p *AssignmentStatement = nil stored in an interface)
+	v := reflect.ValueOf(node)
+	if v.Kind() == reflect.Ptr && v.IsNil() {
+		return &Nil{}
+	}
 	switch n := node.(type) {
 	case *Program:
 		return ev.evalProgram(n)
@@ -111,6 +150,14 @@ func (ev *Evaluator) Eval(node Node) Object {
 		return ev.evalFloatLiteral(n)
 	case *StringLiteral:
 		return &String{Value: n.Value}
+	case *FunctionLiteral:
+		// Create function object capturing current environment
+		fn := &Function{
+			Parameters: n.Parameters,
+			Body:       n.Body,
+			Env:        ev.env,
+		}
+		return fn
 	case *BooleanLiteral:
 		return &Boolean{Value: n.Value}
 	case *NilLiteral:
@@ -125,6 +172,12 @@ func (ev *Evaluator) Eval(node Node) Object {
 		return ev.evalIfExpression(n)
 	case *BlockStatement:
 		return ev.evalBlockStatement(n)
+	case *ReturnStatement:
+		val := ev.Eval(n.ReturnValue)
+		if isError(val) {
+			return val
+		}
+		return &ReturnValue{Value: val}
 	case *AssignmentStatement:
 		value := ev.Eval(n.Value)
 		if isError(value) {
@@ -273,6 +326,10 @@ func (ev *Evaluator) evalBlockStatement(block *BlockStatement) Object {
 		result = ev.Eval(statement)
 
 		if isError(result) {
+			return result
+		}
+		// Propagate return values immediately
+		if result != nil && result.Type() == RETURN_VALUE_OBJ {
 			return result
 		}
 	}
@@ -529,11 +586,8 @@ func (ev *Evaluator) evalLengthPrefixOperator(right Object) Object {
 
 // evalCallExpression evaluates a call expression
 func (ev *Evaluator) evalCallExpression(node *CallExpression) Object {
-	// For now, we'll handle built-in functions like make and free
-	// In the future, user-defined functions will be added
-
-	function := node.Function
-	if ident, ok := function.(*Identifier); ok {
+	// If the function expression is a bare identifier, handle builtin names first
+	if ident, ok := node.Function.(*Identifier); ok {
 		switch ident.Value {
 		case "make":
 			return ev.evalMakeFunction(node)
@@ -541,12 +595,69 @@ func (ev *Evaluator) evalCallExpression(node *CallExpression) Object {
 			return ev.evalFreeFunction(node)
 		case "print":
 			return ev.evalPrintFunction(node.Arguments)
-		default:
-			return &Error{Message: fmt.Sprintf("undefined function: %s", ident.Value)}
 		}
 	}
 
-	return &Error{Message: "not a function"}
+	// Otherwise evaluate the function expression
+	fnObj := ev.Eval(node.Function)
+	if isError(fnObj) {
+		return fnObj
+	}
+
+	// Handle user-defined functions and builtin objects
+	switch fn := fnObj.(type) {
+	case *Function:
+		// Evaluate arguments
+		args := []Object{}
+		for _, a := range node.Arguments {
+			evaluated := ev.Eval(a)
+			if isError(evaluated) {
+				return evaluated
+			}
+			args = append(args, evaluated)
+		}
+
+		// Create new environment enclosed by function's environment
+		extendedEnv := NewEnclosedEnvironment(fn.Env)
+		// Bind parameters
+		for i, param := range fn.Parameters {
+			var val Object = &Nil{}
+			if i < len(args) {
+				val = args[i]
+			}
+			// Parameters are local immutable bindings
+			extendedEnv.Set(param.Value, val, false, node.Token.Line, node.Token.Column)
+		}
+
+		// Save current env and switch
+		prevEnv := ev.env
+		ev.env = extendedEnv
+
+		// Evaluate function body
+		result := ev.evalBlockStatement(fn.Body)
+
+		// Restore environment
+		ev.env = prevEnv
+
+		// Unwrap return value
+		if rv, ok := result.(*ReturnValue); ok {
+			return rv.Value
+		}
+		return result
+	case *Builtin:
+		// Evaluate args as Objects
+		args := []Object{}
+		for _, a := range node.Arguments {
+			evaluated := ev.Eval(a)
+			if isError(evaluated) {
+				return evaluated
+			}
+			args = append(args, evaluated)
+		}
+		return fn.Fn(ev, args...)
+	default:
+		return &Error{Message: "not a function"}
+	}
 }
 
 // evalMakeFunction evaluates the built-in make function
@@ -556,11 +667,14 @@ func (ev *Evaluator) evalMakeFunction(node *CallExpression) Object {
 		return &Error{Message: "make() requires 2 arguments: make(type, size)"}
 	}
 
-	// Get type name - don't evaluate it, just get the identifier
+	// Get type name - accept either identifier or string literal
 	var typeName string
-	if ident, ok := node.Arguments[0].(*Identifier); ok {
-		typeName = ident.Value
-	} else {
+	switch t := node.Arguments[0].(type) {
+	case *Identifier:
+		typeName = t.Value
+	case *StringLiteral:
+		typeName = t.Value
+	default:
 		return &Error{Message: "make() first argument must be a type name"}
 	}
 

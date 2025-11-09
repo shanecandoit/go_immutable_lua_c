@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -231,7 +232,9 @@ func (l *Lexer) readNumber() string {
 		}
 	}
 
-	return l.input[position:l.position]
+	num := l.input[position:l.position]
+	fmt.Printf("readNumber: %s\n", num)
+	return num
 }
 
 // readString reads a string literal
@@ -269,7 +272,9 @@ func (l *Lexer) readString(quote byte) string {
 		l.readChar() // consume closing quote
 	}
 
-	return result.String()
+	str := result.String()
+	fmt.Printf("readString: %s\n", str)
+	return str
 }
 
 // NextToken returns the next token from the input
